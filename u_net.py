@@ -1,7 +1,6 @@
-# https://youtu.be/GAYJ81M58y8
-
 from u_net_functions import build_unet
-from data_preparation import prepare_data
+from data_preparation import prepare_input
+from dice_loss import dice_loss
 from keras.utils import normalize
 import os
 import cv2
@@ -14,73 +13,63 @@ from sklearn.preprocessing import MinMaxScaler
 from keras.optimizers import Adam
 
 from glob import glob
+from sklearn.model_selection import train_test_split 
 import nibabel as nib
 
-#get data
-images, masks = prepare_data()
+import random
+import numpy as np
 
+#Load data, if data is already loaded then replace this line to read the saved files
+#Data is loaded an a numpy array of all the patient scans, where each index is a different patient
+images, masks = prepare_input('training_data')
+
+"""
+#For testing purposes, print the shape of the images and masks arrays
 for i in images.shape:
     print(i)
 
 for i in masks.shape:
     print(i)
+"""
 
-from sklearn.model_selection import train_test_split
-X_train, X_test, y_train, y_test = train_test_split(images, masks, test_size = 0.25, random_state = 0)
+#Split the data into training and testing data
+X_train, X_test, y_train, y_test = train_test_split(images, masks, test_size = 0.25, random_state = 1)
 
+"""
+#For testing purposes, display random data to see if the data was successfully set up
+n = random.randint(len(X_train))
+plt.figure(figsize=(12, 6))
+plt.subplot(121)
+plt.imshow(np.reshape(X_train[image_number], (300, 400)), cmap='gray')
+plt.imshow(X_train[image_number], cmap='gray')
+plt.subplot(122)
+plt.imshow(np.reshape(y_train[image_number], (256, 256)), cmap='gray')
+plt.imshow(y_train[image_number], cmap='gray')
+plt.show()
+"""
 
-#Sanity check, view few images
-import random
-import numpy as np
-image_number = random.randint(0, len(X_train))
+#The model is designed to take in 240 x 240 x 1 images
+shape = (240, 240, 1)
 
-#plt.figure(figsize=(12, 6))
-#plt.subplot(121)
-#plt.imshow(np.reshape(X_train[image_number], (300, 400)), cmap='gray')
-#plt.imshow(X_train[image_number], cmap='gray')
-#plt.subplot(122)
-#plt.imshow(np.reshape(y_train[image_number], (256, 256)), cmap='gray')
-#plt.imshow(y_train[image_number], cmap='gray')
-#plt.show()
+#Build the model
+model = build_unet(shape)
 
+#Compile the model
+model.compile(optimizer=Adam(learning_rate = 0.001), loss='dice', metrics=['accuracy'])
 
-
-
-#IMG_HEIGHT = images.shape[1]
-#IMG_WIDTH  = images.shape[2]
-#IMG_CHANNELS = images.shape[3]
-
-IMG_HEIGHT = 240
-IMG_WIDTH  = 240
-IMG_CHANNELS = 1
-
-for i in X_train[0].shape:
-    print(i)
-
-input_shape = (IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS)
-
-model = build_unet(input_shape)
-# lr was replaced with learning_rate
-model.compile(optimizer=Adam(learning_rate = 1e-3), loss='binary_crossentropy', metrics=['accuracy'])
+#Print summary of the model parametres
 model.summary()
 
+#Set up call back that completes the model training early if the performance stops increasing
+callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3)
 
+#Fit the model
+history = model.fit(X_train, y_train, validation_data=(X_test, y_test), callbacks=[callback], batch_size=32, epochs=50)
 
-#steps_per_epoch = 3*(len(X_train))//batch_size
-steps_per_epoch = 2*len(X_train)
+#Save the model after it has completed training
+model.save("my_model.keras")
 
-
-#inputt = np.array(list((X_train, y_train)))
-
-#used to be  model.fit_generator
-# would be my_generator instead of X_train
-#history = model.fit(X_train, y_train, validation_data=(X_test, y_test), 
-#                    steps_per_epoch=steps_per_epoch, 
-#                    validation_steps=steps_per_epoch, epochs=1)
-
-history = model.fit(X_train, y_train, validation_data=(X_test, y_test), batch_size=32, epochs=25)
-
-#plot the training and validation accuracy and loss at each epoch
+#Plot the training and validation accuracy and loss at each epoch
 loss = history.history['loss']
 val_loss = history.history['val_loss']
 epochs = range(1, len(loss) + 1)
@@ -97,8 +86,6 @@ acc = history.history['accuracy']
 val_acc = history.history['val_accuracy']
 #val_acc = history.history['val_accuracy']
 
-model.save("my_model.keras")
-
 plt.plot(epochs, acc, 'y', label='Training acc')
 plt.plot(epochs, val_acc, 'r', label='Validation acc')
 plt.title('Training and validation accuracy')
@@ -107,8 +94,14 @@ plt.ylabel('Accuracy')
 plt.legend()
 plt.show()
 
+#Dice Score Co-efficient
+pred = model.predict(X_test)
+dl = dice_loss(y_test, pred, 1)
+print("Dice Score Coefficient Loss : ", dl)
+
 
 #IOU
+"""
 y_pred=model.predict(X_test)
 y_pred_thresholded = y_pred > 0.5
 
@@ -116,7 +109,8 @@ intersection = np.logical_and(y_test, y_pred_thresholded)
 union = np.logical_or(y_test, y_pred_thresholded)
 iou_score = np.sum(intersection) / np.sum(union)
 print("IoU socre is: ", iou_score)
-
+"""
+"""
 test_img_number = random.randint(0, len(X_test))
 test_img = X_test[test_img_number]
 ground_truth=y_test[test_img_number]
@@ -136,3 +130,4 @@ plt.title('Prediction on test image')
 plt.imshow(prediction, cmap='gray')
 
 plt.show()
+"""
