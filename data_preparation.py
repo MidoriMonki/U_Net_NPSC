@@ -12,62 +12,88 @@ from matplotlib import cm
 import random
 import numpy as np
 
+def normalise_2d(matrix):
+        norm = np.linalg.norm(matrix)
+        matrix = matrix/norm
+        return matrix
+
 def prepare_data(file_name):
+	patient_f = f''+str(file_name)+'/*/*/'
+	pet_f = glob(patient_f + '/PET.nii.gz')
+	seg_f = glob(patient_f + '/SEG.nii.gz')
+	ct_f = glob(patient_f + '/CTres.nii.gz')
+
+	#For each patient found
+	for i in range(len(pet_f)):
+		print(i)
+		#Get data from file
+		pet = (nib.load(pet_f[i]).get_fdata())
+		seg = (nib.load(seg_f[i]).get_fdata())
+		ct = (nib.load(ct_f[i]).get_fdata())
+		
+		pet = np.array(pet)
+		seg = np.array(seg)
+		ct = np.array(ct)
+
+		#Swap axes of the scans
+		pet = np.transpose(pet, axes=[2, 1, 0])
+		seg = np.transpose(seg, axes=[2, 1, 0])
+		ct = np.transpose(ct, axes=[2, 1, 0])
+
+		#Expand dimensions
+		pet = np.expand_dims(pet, -1)
+		seg = np.expand_dims(seg, -1)
+		ct = np.expand_dims(ct, -1)
+			
+		pet_arr, seg_arr, ct_arr = [], [], []
+
+		for j in range(len(pet)):
+			temp_pet = pet[j][88:312, 88:312]
+			temp_seg = seg[j][88:312, 88:312]
+			temp_ct = ct[j][88:312, 88:312]
+
+			#temp_seg = normalise_2d(temp_seg)			
+			#temp_pet = normalise_2d(temp_pet)
+
+			#ok = temp_ct
+			#cv2.addWeighted(temp_ct, 0.5, temp_pet, 1, 1, ok)
+
+			pet_arr.append(temp_pet)
+			seg_arr.append(temp_seg)
+			ct_arr.append(temp_ct)
+
+
+		pet_arr = np.array(pet_arr)
+		seg_arr = np.array(seg_arr)
+		ct_arr = np.array(ct_arr)
+
+		final_pet = nib.Nifti1Image(pet_arr, affine=np.eye(4))
+		final_seg = nib.Nifti1Image(seg_arr, affine=np.eye(4))
+		final_ct = nib.Nifti1Image(ct_arr, affine=np.eye(4))
+
+		if not os.path.exists("training_data/"+str(i+1)):
+			os.makedirs("training_data/"+str(i+1))
+		nib.save(final_pet, os.path.join("training_data/"+str(i+1), 'PET.nii.gz'))
+		nib.save(final_seg, os.path.join("training_data/"+str(i+1), 'SEG.nii.gz'))
+		nib.save(final_ct, os.path.join("training_data/"+str(i+1), 'CTres.nii.gz'))
+
+
+def prepare_input(file_name):
+	images, masks = [], []
+	#prepare_data('test_data')
+
 	patient_f = f''+str(file_name)+'/*/'
 	pet_f = glob(patient_f + '/PET.nii.gz')
-	ct_f = glob(patient_f + '/CTres.nii.gz')
 	seg_f = glob(patient_f + '/SEG.nii.gz')
-
-	pet, ct, seg = [], [], []
 
 	#For each patient found
 	for i in range(len(pet_f)):
 		#Get data from file
-		pet.append(nib.load(pet_f[i]).get_fdata())
-		ct.append(nib.load(ct_f[i]).get_fdata())
-		seg.append(nib.load(seg_f[i]).get_fdata())
-		#Swap axes of the scans
-		pet[i] = np.transpose(pet[i], axes=[2, 1, 0])
-		ct[i] = np.transpose(ct[i], axes=[2, 1, 0])
-		seg[i] = np.transpose(seg[i], axes=[2, 1, 0])
-		#Expand dimensions
-		pet[i] = np.expand_dims(pet[i], -1)
-		ct[i] = np.expand_dims(ct[i], -1)
-		seg[i] = np.expand_dims(seg[i], -1)
-	
-	images = []
-	masks = []
-	ct_arr = []
+		pet = (nib.load(pet_f[i]).get_fdata())
+		seg = (nib.load(seg_f[i]).get_fdata())
+		images.append(pet)
+		masks.append(seg)
 
-	for i in range(len(pet)):
-		images.append([])
-		ct_arr.append([])
-		masks.append([])
-		for j in range(len(pet[i])):
-			#crop our scans
-			temp_pet = pet[i][j][80:320, 80:320]
-			temp_ct = ct[i][j][80:320, 80:320]
-			temp_seg = seg[i][j][80:320, 80:320]
-			#temp_seg = normalize_2d(temp_seg)
-			#temp_ct = normalize_2d(temp_ct)
-			images[i].append(temp_pet)
-			masks[i].append(temp_seg)
-			ct_arr[i].append(temp_ct)
-			#ok = temp_ct
-			#cv2.addWeighted(temp_ct, 1, temp_pet, 1, 1, ok)
-
-	return images, masks, ct_arr
-
-
-
-def prepare_input(file_name):
-	im, ms, ct = prepare_data(file_name)
-	images, masks = [], []
-
-	for i in range(len(im)):
-		for j in range(len(im[i])):
-			images.append(im[i][j])
-			masks.append(im[i][j])
 	#Returns data in a numpy array format, so the model can use it
 	return np.array(images), np.array(masks)
 
@@ -79,10 +105,13 @@ def prepare_results(ct, seg):
 
 	ct = np.array(ct)
 	seg = np.array(seg)
+	
+	print(ct.shape)
+	print(seg.shape)
 
 	#Remove the fourth the axes, as PIL convert to RGBA does not accept it
 	ct = np.squeeze(ct, 3)
-	#seg = np.squeeze(seg, 3)
+	seg = np.squeeze(seg, 3)
 
 	#Rotate the and swap axes of scans to form full body proportions
 	ct = np.transpose(ct, axes=[1, 0, 2])
@@ -93,7 +122,8 @@ def prepare_results(ct, seg):
 	seg = np.rot90((seg), 1)
 	seg = np.rot90((seg), 1)
 
-
+	print(len(ct))
+	print(seg.shape)
 	#For each image in the ct scan
 	
 	for i in range(len(ct)):
@@ -101,6 +131,7 @@ def prepare_results(ct, seg):
 		pil_seg = Image.fromarray((seg[i])*255)
 		pil_seg = pil_seg.convert('RGBA')
 		temp_seg = np.array(pil_seg)
+
 		#Repeat for the segmentation images
 		pil_ct = Image.fromarray((ct[i]))
 		pil_ct = pil_ct.convert('RGBA')
@@ -134,6 +165,9 @@ def prepare_results(ct, seg):
 	file_name = 'example1.gif'
 	count = 1
 
+	print(np.array(save_ct).shape)
+	print(np.array(return_ct).shape)
+
 	if not os.path.exists('whole-body_seg/'):
 		os.makedirs('whole-body_seg/')
 
@@ -143,6 +177,6 @@ def prepare_results(ct, seg):
 		file_name = 'example' + str(count) + '.gif'
 
 	#Save all the final images into a gif for presentation
-	save_ct[0].save('whole-body_seg/' + file_name, save_all=True, append_images=save_ct[1:], optimize=False, duration=40, loop=0)
+	save_ct[0].save('whole-body_seg/' + file_name, save_all=True, append_images=save_ct[:], optimize=False, loop=0)
 
 	return return_ct
