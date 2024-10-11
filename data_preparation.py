@@ -1,23 +1,12 @@
 import os
 import cv2
 import numpy as np
-from matplotlib import pyplot as plt
 from PIL import Image
-
 from glob import glob
 import nibabel as nib
-
-from matplotlib import cm
-
 import random
-import numpy as np
 
-def normalise_2d(matrix):
-        norm = np.linalg.norm(matrix)
-        matrix = matrix/norm
-        return matrix
-
-def prepare_data(file_name):
+def prepare_data(file_name, dest_name):
 	patient_f = f''+str(file_name)+'/*/*/'
 	pet_f = glob(patient_f + '/PET.nii.gz')
 	seg_f = glob(patient_f + '/SEG.nii.gz')
@@ -25,7 +14,7 @@ def prepare_data(file_name):
 
 	#For each patient found
 	for i in range(len(pet_f)):
-		print(i)
+		print('Patient '+str(i+1)+'/'+str(len(pet_f)))
 		#Get data from file
 		pet = (nib.load(pet_f[i]).get_fdata())
 		seg = (nib.load(seg_f[i]).get_fdata())
@@ -51,53 +40,26 @@ def prepare_data(file_name):
 			temp_pet = pet[j][88:312, 88:312]
 			temp_seg = seg[j][88:312, 88:312]
 			temp_ct = ct[j][88:312, 88:312]
-
-			#temp_seg = normalise_2d(temp_seg)			
-			#temp_pet = normalise_2d(temp_pet)
-
-			#ok = temp_ct
-			#cv2.addWeighted(temp_ct, 0.5, temp_pet, 1, 1, ok)
-
+			#Used to remove a majority of the empty masked slices to balance the dataset
+			#if cv2.sumElems(temp_seg)[0] > 0: #or random.randint(0, 45) == 1:
 			pet_arr.append(temp_pet)
 			seg_arr.append(temp_seg)
 			ct_arr.append(temp_ct)
-
 
 		pet_arr = np.array(pet_arr)
 		seg_arr = np.array(seg_arr)
 		ct_arr = np.array(ct_arr)
 
+		#After applying pre-processing, convert back to Nifti format
 		final_pet = nib.Nifti1Image(pet_arr, affine=np.eye(4))
 		final_seg = nib.Nifti1Image(seg_arr, affine=np.eye(4))
 		final_ct = nib.Nifti1Image(ct_arr, affine=np.eye(4))
 
-		if not os.path.exists("training_data/"+str(i+1)):
-			os.makedirs("training_data/"+str(i+1))
-		nib.save(final_pet, os.path.join("training_data/"+str(i+1), 'PET.nii.gz'))
-		nib.save(final_seg, os.path.join("training_data/"+str(i+1), 'SEG.nii.gz'))
-		nib.save(final_ct, os.path.join("training_data/"+str(i+1), 'CTres.nii.gz'))
-
-
-def prepare_input(file_name):
-	images, masks = [], []
-	#prepare_data('test_data')
-
-	patient_f = f''+str(file_name)+'/*/'
-	pet_f = glob(patient_f + '/PET.nii.gz')
-	seg_f = glob(patient_f + '/SEG.nii.gz')
-
-	#For each patient found
-	for i in range(len(pet_f)):
-		#Get data from file
-		pet = (nib.load(pet_f[i]).get_fdata())
-		seg = (nib.load(seg_f[i]).get_fdata())
-		images.append(pet)
-		masks.append(seg)
-
-	#Returns data in a numpy array format, so the model can use it
-	return np.array(images), np.array(masks)
-
-
+		if not os.path.exists(dest_name+"/"+str(i+1)):
+			os.makedirs(dest_name+"/"+str(i+1))
+		nib.save(final_pet, os.path.join(dest_name+"/"+str(i+1), 'PET.nii.gz'))
+		nib.save(final_seg, os.path.join(dest_name+"/"+str(i+1), 'SEG.nii.gz'))
+		nib.save(final_ct, os.path.join(dest_name+"/"+str(i+1), 'CTres.nii.gz'))
 
 def prepare_results(ct, seg):
 	return_ct = []
@@ -105,19 +67,17 @@ def prepare_results(ct, seg):
 
 	ct = np.array(ct)
 	seg = np.array(seg)
-	
-	print(ct.shape)
-	print(seg.shape)
 
 	#Remove the fourth the axes, as PIL convert to RGBA does not accept it
-	ct = np.squeeze(ct, 3)
-	seg = np.squeeze(seg, 3)
+	#ct = np.squeeze(ct, 3)
+	#seg = np.squeeze(seg, 3)
 
-	#Rotate the and swap axes of scans to form full body proportions
+	#Rotate the and swap axes of slices to form full body proportions
 	ct = np.transpose(ct, axes=[1, 0, 2])
 	ct = np.rot90((ct), 1)
 	ct = np.rot90((ct), 1)
-	#Repeat for the segmentation
+
+	#Repeat for the segmentation slices
 	seg = np.transpose(seg, axes=[1, 0, 2])
 	seg = np.rot90((seg), 1)
 	seg = np.rot90((seg), 1)
@@ -140,17 +100,15 @@ def prepare_results(ct, seg):
 		#Get colour of the segmentation images
 		rgb = temp_seg[:,:,:3]
 		
-		#Create a mask that represents all the pixel where the segmentation mask is black [0,0,0]
-		#These pixels are the ones where the mask did not identify any tumours
+		#Create a mask that represents all the pixel where the segmentation mask is black [0,0,0] (no tumour)
 		mask = np.all(rgb <= [0,0,0], axis = -1)
 
 		#Convert all the pixels that are black into transparent pixels [r,g,b,0]
 		temp_seg[mask] = [0,0,0,0]
 
-		#Convert the rest of the pixels into a green [50,250,50,255]
+		#Convert the rest of the pixels into a green colour [50,250,50,255]
 		temp_seg[np.logical_not(mask)] = [50,250,50,255]
 
-		#Convert the scans back to PIL images
 		temp_seg = Image.fromarray(temp_seg)
 		temp_ct = Image.fromarray(temp_ct)
 
@@ -158,11 +116,10 @@ def prepare_results(ct, seg):
 		temp_ct.paste(temp_seg, (0,0), mask = temp_seg) 
 		temp_ct = np.array(temp_ct)
 
-		#Append the results to our two arrays
 		save_ct.append(Image.fromarray(temp_ct))
 		return_ct.append(temp_ct)
 
-	file_name = 'example1.gif'
+	file_name = 'result_1.gif'
 	count = 1
 
 	print(np.array(save_ct).shape)
@@ -174,9 +131,12 @@ def prepare_results(ct, seg):
 	#Find file name that has not been used yet
 	while glob('whole-body_seg/' + file_name):
 		count += 1
-		file_name = 'example' + str(count) + '.gif'
+		file_name = 'result_' + str(count) + '.gif'
 
 	#Save all the final images into a gif for presentation
 	save_ct[0].save('whole-body_seg/' + file_name, save_all=True, append_images=save_ct[:], optimize=False, loop=0)
 
 	return return_ct
+
+
+#prepare_data('converted_data')
